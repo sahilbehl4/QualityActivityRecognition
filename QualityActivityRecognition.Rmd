@@ -1,0 +1,250 @@
+---
+title: "Quality Activity Recognition"
+author:
+- Sahil Behl
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+\begin{center}
+\end{center}
+
+#Introduction  
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this analysis, the goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here:  [link](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har).
+
+ 
+```{r warning=FALSE, results='hide', echo=FALSE, include=FALSE}
+#install.packages("caTools")
+#install.packages("ggplot2")
+#install.packages("caret")
+#install.packages("rpart")
+#install.packages("rpart.plot")
+#install.packages("magrittr")
+#install.packages("dplyr")
+#install.packages("randomForest")
+library(caTools)
+library(ggplot2)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(magrittr)
+library(dplyr)
+library(randomForest)
+```
+
+# Importing Data and PreProcessing 
+The dataset from the link provided above is first download into the dataset.csv file in the data folder.
+The data is then imported into the dataset variable. Along with importing the data some cleaning is performed where the missing and "#DIV/0" values are replaced with NA values so that further cleaning is much easier.
+
+```{r echo=TRUE, cache=TRUE}
+trainingDatasetURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv";
+download.file(trainingDatasetURL,'training.csv',method = 'curl')
+training_set <- read.csv('training.csv', na.strings=c("NA","#DIV/0!",""))
+
+testingDatasetURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv";
+download.file(testingDatasetURL,'test.csv',method = 'curl')
+test_set <- read.csv('test.csv', na.strings=c("NA","#DIV/0!",""))
+```
+
+After data partition lets look at the dimensions of both training set and test set.
+```{r}
+dim(training_set)
+dim(test_set)
+```
+Looking at varibles which remain almost zero variablilty. These variables/columns will not have effect on our prediction.
+
+```{r echo = TRUE}
+nzv <- nearZeroVar(training_set, saveMetrics = TRUE)
+```
+Removing near zero varibles that we saw above
+```{r}
+training_set <- training_set[,!nzv$nzv]
+test_set <- test_set[,!nzv$nzv]
+dim(training_set)
+dim(test_set)
+```
+
+### NA Values  
+The Columns that have almost all values NA will play no factor in prediction.
+```{r}
+x <- colSums(is.na(training_set))
+x <- x[x > 10000]
+NAvaribles <- names(training_set) %in% names(x)
+training_set <- training_set[,!NAvaribles]
+test_set <- test_set[,!NAvaribles]
+dim(training_set)
+dim(test_set)
+```
+
+# Model Building
+
+Before Model Building the the first five columns of our training set can be removed because they will play not part.
+
+```{r}
+training_set <- training_set[,6:59]
+test_set <- test_set[,6:59]
+dim(training_set)
+dim(test_set)
+```
+So that there is no bias while we training our model using test set we further divide our training_set into validation and train set.
+
+```{r}
+set.seed(123)
+split = sample.split(training_set$roll_belt, SplitRatio = 0.8)
+train = subset(training_set, split == TRUE)
+validate = subset(training_set, split == FALSE)
+dim(train)
+dim(validate)
+```
+
+The first model we choose is decision tree to train.
+
+```{r}
+model1 <- rpart(classe ~ ., data = train)
+y_pred <- predict(model1, newdata = validate, type = 'class')
+cmtree1 <- confusionMatrix(y_pred, validate$classe)
+print(cmtree1)
+```
+
+The decision tree can be drawn below:
+
+```{r fig.align='center'}
+prp(model1)
+```
+
+The cross validation table is given below:
+
+```{r fig.align='center'}
+#get data 
+data = data.frame(validate$classe, y_pred)
+names(data) = c("Actual", "Predicted") 
+
+#compute frequency of actual categories
+actual = as.data.frame(table(data$Actual))
+names(actual) = c("Actual","ActualFreq")
+
+#build confusion matrix
+confusion = as.data.frame(table(data$Actual, data$Predicted))
+names(confusion) = c("Actual","Predicted","Freq")
+
+#calculate percentage of test cases based on actual frequency
+confusion = merge(confusion, actual)
+confusion$Percent = confusion$Freq/confusion$ActualFreq*100
+
+#render plot
+# we use three different layers
+# first we draw tiles and fill color based on percentage of test cases
+tile <- ggplot() +
+      geom_tile(aes(x=Actual, y=Predicted,fill=Percent),data=confusion, color="black",size=0.1) +
+      labs(x="Actual",y="Predicted")
+tile = tile + 
+      geom_text(aes(x=Actual,y=Predicted, label=sprintf("%.1f", Percent)),data=confusion, size=3, colour="black") +
+      scale_fill_gradient(low="grey",high="red")
+
+# lastly we draw diagonal tiles. We use alpha = 0 so as not to hide previous layers but use size=0.3 to highlight border
+tile = tile + 
+      geom_tile(aes(x=Actual,y=Predicted),data=subset(confusion, as.character(Actual)==as.character(Predicted)), color="black",size=0.3, fill="black", alpha=0) 
+
+#render
+tile
+```
+
+The next model we try is random forest 
+```{r}
+model2 <- randomForest(formula = classe ~ .,data = train,ntree = 5)
+y_pred <- predict(model2, newdata = validate, type = 'class')
+cmtree2 <- confusionMatrix(y_pred, validate$classe)
+print(cmtree2)
+```
+The Confustion matrix can be seen below
+```{r fig.align='center'}
+data = data.frame(validate$classe, y_pred)
+names(data) = c("Actual", "Predicted") 
+
+#compute frequency of actual categories
+actual = as.data.frame(table(data$Actual))
+names(actual) = c("Actual","ActualFreq")
+
+#build confusion matrix
+confusion = as.data.frame(table(data$Actual, data$Predicted))
+names(confusion) = c("Actual","Predicted","Freq")
+
+#calculate percentage of test cases based on actual frequency
+confusion = merge(confusion, actual)
+confusion$Percent = confusion$Freq/confusion$ActualFreq*100
+
+#render plot
+# we use three different layers
+# first we draw tiles and fill color based on percentage of test cases
+tile <- ggplot() +
+      geom_tile(aes(x=Actual, y=Predicted,fill=Percent),data=confusion, color="black",size=0.1) +
+      labs(x="Actual",y="Predicted")
+tile = tile + 
+      geom_text(aes(x=Actual,y=Predicted, label=sprintf("%.1f", Percent)),data=confusion, size=3, colour="black") +
+      scale_fill_gradient(low="grey",high="red")
+
+# lastly we draw diagonal tiles. We use alpha = 0 so as not to hide previous layers but use size=0.3 to highlight border
+tile = tile + 
+      geom_tile(aes(x=Actual,y=Predicted),data=subset(confusion, as.character(Actual)==as.character(Predicted)), color="black",size=0.3, fill="black", alpha=0) 
+
+#render
+tile
+```
+Accuracy of both models (decision tree and random forest)
+```{r}
+AccuracyResults <- data.frame(
+      Model = c('Decision Tree', 'Random Forest'),
+      Accuracy = rbind(cmtree1$overall[1], cmtree2$overall[1])
+)
+```
+
+The relative importance of each columns can be seen below for building model
+
+```{r}
+importance    <- importance(model2)
+varImportance <- data.frame(Variables = row.names(importance), 
+                            Importance = round(importance[ ,'MeanDecreaseGini'],2))
+
+#Create a rank variable based on importance
+rankImportance <- varImportance %>% 
+      mutate(Rank = dense_rank(desc(Importance)))
+
+#Use ggplot2 to visualize the relative importance of variables
+library(ggplot2)
+ggplot(rankImportance, aes(x = reorder(Variables, Importance), 
+                           y = Importance, fill = Importance)) +
+      geom_bar(stat='identity') + 
+      geom_text(aes(x = Variables, y = 0.5, label = Rank),
+                hjust=0, vjust=0.55, size = 4, colour = 'red') +
+      labs(x = 'Variables') +
+      coord_flip()
+```
+
+In the final model for prediction we take top 15 important columns. 
+
+```{r}
+selectedColumns <- rankImportance[order(rankImportance$Rank,rankImportance$Variables),1]
+selectedColumns <- selectedColumns[1:15]
+selectedColumns <- union(selectedColumns,c("classe"))
+print(selectedColumns)
+selectedColumns <- as.array(selectedColumns)  
+```
+
+The training set with above columns
+```{r}
+selectedTraining <- training_set[,c("roll_belt","yaw_belt","magnet_dumbbell_z","roll_forearm","pitch_belt","magnet_dumbbell_y","pitch_forearm","magnet_belt_z","magnet_dumbbell_x","roll_dumbbell","magnet_belt_y","accel_forearm_x","gyros_belt_z","magnet_forearm_z","accel_dumbbell_z","classe" )]
+dim(selectedTraining)
+finalModel <- randomForest(classe ~ ., data = selectedTraining, ntree = 5)
+```
+
+# Prediction
+
+```{r}
+test_set <- test_set[,c("roll_belt","yaw_belt","magnet_dumbbell_z","roll_forearm","pitch_belt","magnet_dumbbell_y","pitch_forearm","magnet_belt_z","magnet_dumbbell_x","roll_dumbbell","magnet_belt_y","accel_forearm_x","gyros_belt_z","magnet_forearm_z","accel_dumbbell_z")]
+final_prediction <- predict(finalModel, newdata = test_set, type = 'class')
+print(final_prediction)
+```
+
+
